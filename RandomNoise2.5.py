@@ -141,7 +141,7 @@ def main():
         help='push model to hub'
     )
 
-    parser.add_argument("--pretrained_model_name_or_path", type=str, default="Hhhhhao97/ldm_imagenet_random_noise_30")
+    parser.add_argument("--pretrained_model_name_or_path", type=str, default="Hhhhhao97/ldm_imagenet_random_noise_2.5")
     parser.add_argument("--hub_token", type=str, default="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")
 
     parser.add_argument(
