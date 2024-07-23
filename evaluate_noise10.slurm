@@ -9,4 +9,4 @@
 
 
 # 运行Python脚本
-python yucheng/evaluate_noise10.py
+python yucheng/evaluation_noise10.py
