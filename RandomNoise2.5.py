@@ -89,12 +89,12 @@ def calculate_inception_score(images, device, batch_size=32, splits=10):
     return np.mean(scores), np.std(scores)
 
 if __name__ == "__main__":
-    generated_images_folder = 'output'  # Folder containing generated images
+    generated_images_folder = 'output/randomnoise2.5'  # Folder containing generated images
     
     generated_images = ImagesDataset(generated_images_folder)
     
     # Assume real_images is a dataset of real images you want to compare against
-    real_images_folder = 'path_to_real_images'  # Replace with actual folder path
+    real_images_folder = 'output/clean'  # Replace with actual folder path
     real_images = ImagesDataset(real_images_folder)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -104,3 +104,4 @@ if __name__ == "__main__":
 
     inception_score, std = calculate_inception_score(generated_images, device)
     print(f"Inception Score: {inception_score} ± {std}")
+
