@@ -14,4 +14,4 @@ module load anaconda  # 如果需要加载Anaconda模块
 source activate myenv  # 替换为您的conda环境名称
 
 # 运行Python脚本
-python yucheng/evaluate_noise2.5.py
+python yucheng/evaluation_noise2.5.py
