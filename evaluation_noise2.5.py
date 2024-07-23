@@ -1,4 +1,3 @@
-import os
 import torch
 from torchvision import models, transforms
 from scipy.linalg import sqrtm
@@ -7,6 +6,7 @@ from tqdm import tqdm
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 import torch.nn.functional as F
+import os
 
 class ImagesDataset(Dataset):
     def __init__(self, image_folder):
@@ -31,8 +31,8 @@ class ImagesDataset(Dataset):
         img = self.transform(img)
         return img
 
-def calculate_fid(real_images, generated_images):
-    model = models.inception_v3(pretrained=True, transform_input=False)
+def calculate_fid(real_images, generated_images, device):
+    model = models.inception_v3(pretrained=True, transform_input=False).to(device)
     model.fc = torch.nn.Identity()
     model.eval()
 
@@ -65,8 +65,8 @@ def calculate_fid(real_images, generated_images):
     fid = diff.dot(diff) + np.trace(sigma_real + sigma_generated - 2 * covmean)
     return fid
 
-def calculate_inception_score(images, batch_size=32, splits=10):
-    model = models.inception_v3(pretrained=True, transform_input=False)
+def calculate_inception_score(images, device, batch_size=32, splits=10):
+    model = models.inception_v3(pretrained=True, transform_input=False).to(device)
     model.eval()
 
     def get_pred(dataloader):
@@ -99,8 +99,8 @@ if __name__ == "__main__":
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    fid = calculate_fid(real_images, generated_images)
+    fid = calculate_fid(real_images, generated_images, device)
     print(f"FID: {fid}")
 
-    inception_score, std = calculate_inception_score(generated_images)
+    inception_score, std = calculate_inception_score(generated_images, device)
     print(f"Inception Score: {inception_score} ± {std}")
