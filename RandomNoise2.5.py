@@ -1,107 +1,214 @@
+import argparse, os, sys, glob
+import yaml 
 import torch
-from torchvision import models, transforms
-from scipy.linalg import sqrtm
 import numpy as np
-from tqdm import tqdm
+from omegaconf import OmegaConf
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset
-import torch.nn.functional as F
-import os
+from tqdm import tqdm
 
-class ImagesDataset(Dataset):
-    def __init__(self, image_folder):
-        self.image_folder = image_folder
-        self.image_paths = []
-        for root, _, files in os.walk(image_folder):
-            for file in files:
-                if file.endswith(('.png', '.jpg', '.jpeg')):  # Adjust the extensions as needed
-                    self.image_paths.append(os.path.join(root, file))
-        self.transform = transforms.Compose([
-            transforms.Resize((299, 299)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-        ])
+from pytorch_lightning import seed_everything
+from diffusers import DDIMScheduler, UNet2DConditionModel, VQModel, DPMSolverMultistepScheduler, DDPMScheduler
+from diffusers.pipelines.latent_diffusion.pipeline_latent_diffusion import LDMClassToImagePipeline
+#from eval_scripts.push_ldm_model_pretrain import convert_from_ldm_to_diffuser
 
-    def __len__(self):
-        return len(self.image_paths)
+def save_image(img, save_path):
+    img.save(save_path, "JPEG", quality=100, subsampling=0)
 
-    def __getitem__(self, idx):
-        img_path = self.image_paths[idx]
-        img = Image.open(img_path).convert('RGB')
-        img = self.transform(img)
-        return img
 
-def calculate_fid(real_images, generated_images, device):
-    model = models.inception_v3(pretrained=True, transform_input=False).to(device)
-    model.fc = torch.nn.Identity()
-    model.eval()
+def save_images_multiprocess(mp_save_count, gen_images_list, save_names_list):
+    import multiprocessing
+    pool = multiprocessing.Pool(mp_save_count)
+    pool.starmap(save_image, zip(gen_images_list, save_names_list))
+    pool.close()
+    pool.join()
 
-    def get_activations(images, model, batch_size=32):
-        dataloader = DataLoader(images, batch_size=batch_size, shuffle=False, num_workers=2)
-        activations = []
-        with torch.no_grad():
-            for batch in tqdm(dataloader):
-                batch = batch.to(device)
-                pred = model(batch)
-                activations.append(pred.cpu().numpy())
-        activations = np.concatenate(activations, axis=0)
-        return activations
 
-    real_activations = get_activations(real_images, model)
-    generated_activations = get_activations(generated_images, model)
 
-    mu_real = np.mean(real_activations, axis=0)
-    sigma_real = np.cov(real_activations, rowvar=False)
+def main():
+    parser = argparse.ArgumentParser()
 
-    mu_generated = np.mean(generated_activations, axis=0)
-    sigma_generated = np.cov(generated_activations, rowvar=False)
+    parser.add_argument(
+        "--outdir",
+        type=str,
+        nargs="?",
+        help="dir to write results to",
+        default="tmp"
+    )
+    parser.add_argument(
+        "--ddim_steps",
+        type=int,
+        default=50,
+        help="number of ddim sampling steps",
+    )
+    # parser.add_argument(
+    #     "--plms",
+    #     action='store_true',
+    #     help="use plms sampling",
+    # )
+    # parser.add_argument(
+    #     "--dpm_solver",
+    #     action='store_true',
+    #     help="use dpm_solver sampling",
+    # )cd
+    parser.add_argument(
+        "--scheduler",
+        type=str,
+        default="ddim",
+        choices=["ddim", "dpm"],
+    )
+    parser.add_argument(
+        "--fixed_code",
+        action='store_true',
+        help="if enabled, uses the same starting code across samples ",
+    )
+    parser.add_argument(
+        "--ddim_eta",
+        type=float,
+        default=0.0,
+        help="ddim eta (eta=0.0 corresponds to deterministic sampling",
+    )
 
-    diff = mu_real - mu_generated
-    covmean = sqrtm(sigma_real.dot(sigma_generated))
-
-    if np.iscomplexobj(covmean):
-        covmean = covmean.real
-
-    fid = diff.dot(diff) + np.trace(sigma_real + sigma_generated - 2 * covmean)
-    return fid
-
-def calculate_inception_score(images, device, batch_size=32, splits=10):
-    model = models.inception_v3(pretrained=True, transform_input=False).to(device)
-    model.eval()
-
-    def get_pred(dataloader):
-        preds = []
-        with torch.no_grad():
-            for batch in tqdm(dataloader):
-                batch = batch.to(device)
-                pred = model(batch)
-                preds.append(F.softmax(pred, dim=1).cpu().numpy())
-        return np.concatenate(preds, axis=0)
-
-    dataloader = DataLoader(images, batch_size=batch_size, shuffle=False, num_workers=2)
-    preds = get_pred(dataloader)
-    scores = []
-    for i in range(splits):
-        part = preds[(i * preds.shape[0] // splits):((i + 1) * preds.shape[0] // splits), :]
-        kl_div = part * (np.log(part) - np.log(np.expand_dims(np.mean(part, axis=0), 0)))
-        kl_div = np.mean(np.sum(kl_div, axis=1))
-        scores.append(np.exp(kl_div))
-    return np.mean(scores), np.std(scores)
-
-if __name__ == "__main__":
-    generated_images_folder = 'output/randomnoise2.5'  # Folder containing generated images
     
-    generated_images = ImagesDataset(generated_images_folder)
+    parser.add_argument(
+        "--f",
+        type=int,
+        default=4,
+        help="downsampling factor",
+    )
     
-    # Assume real_images is a dataset of real images you want to compare against
-    real_images_folder = 'output/clean'  # Replace with actual folder path
-    real_images = ImagesDataset(real_images_folder)
+    parser.add_argument(
+        "--image_size",
+        type=int,
+        default=256,
+        help='image size to genearte'
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=5,
+        help="how many samples to produce for each given prompt. A.k.a. batch size",
+    )
+    parser.add_argument(
+        "--n_samples",
+        type=int,
+        default=5,
+        help="how many samples to produce for each given prompt. A.k.a. batch size",
+    )
+    parser.add_argument(
+        "--scale",
+        type=float,
+        default=7.5,
+        help="unconditional guidance scale: eps = eps(x, empty) + scale * (eps(x, cond) - eps(x, empty))",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/latent-diffusion-imagenet/train_ldm_imagenet_random_noise_50.yaml",
+        help="path to config which constructs model",
+    )
+    parser.add_argument(
+        "--ckpt",
+        type=str,
+        default="checkpoints/ldm/ldm_imagenet_random_noise_50",
+        help="path to checkpoint of model",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="the seed (for reproducible sampling)",
+    )
+    parser.add_argument(
+        "--precision",
+        type=str,
+        help="evaluate at this precision",
+        choices=["full", "autocast"],
+        default="autocast"
+    )
     
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # split classes
+    parser.add_argument(
+        "--class_start_idx", type=int, help="class number start_idx", default=0
+    )
+    parser.add_argument(
+        "--class_end_idx", type=int, help="class number end_idx", default=100
+    )
+    
+    # push to hub
+    parser.add_argument(
+        '--push_to_hub',
+        action='store_true',
+        help='push model to hub'
+    )
 
-    fid = calculate_fid(real_images, generated_images, device)
-    print(f"FID: {fid}")
+    parser.add_argument("--pretrained_model_name_or_path", type=str, default="Hhhhhao97/ldm_imagenet_random_noise_2.5")
+    parser.add_argument("--hub_token", type=str, default="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")
 
-    inception_score, std = calculate_inception_score(generated_images, device)
-    print(f"Inception Score: {inception_score} ± {std}")
+    parser.add_argument(
+        "--uncond",
+        action='store_true',
+        help="if set, generate images without conditioning on class labels"
+    )
+    
+    opt = parser.parse_args()
 
+    seed_everything(opt.seed)
+
+    uncond = opt.uncond
+    
+      # load pipeline
+    pipeline = LDMClassToImagePipeline.from_pretrained(opt.pretrained_model_name_or_path, use_auth_token=True, token=opt.hub_token)    
+    # replace a faster scheduler
+    pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
+    pipeline = pipeline.to('cuda')
+    pipeline = pipeline.to(torch.float16)
+    vqvae = pipeline.vqvae
+    
+    # output dir
+    os.makedirs(opt.outdir, exist_ok=True)
+    outpath = opt.outdir
+
+    # get class labels
+    classes = np.arange(opt.class_start_idx, opt.class_end_idx)
+    n_samples_per_class = opt.n_samples
+    base_count = 0
+    batch_size = opt.batch_size
+
+    with open('data/synset_human.txt', "r") as f:
+        syn2name_dict = f.read().splitlines()
+        syn2name_dict = dict(line.split(maxsplit=1) for line in syn2name_dict)
+    with open('data/index_synset.yaml', "r") as f:
+        idx2syn_dict = yaml.safe_load(f)
+    
+    # # push to hub
+    # repo_id = '.'.join('_'.join(opt.config.split('/')[-1].split('_')[1:]).split('.')[:-1])
+    # pipeline.push_to_hub(repo_id, private=True, token='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')
+    
+    with torch.no_grad():
+        for class_label in tqdm(classes):
+    
+            folder_name = idx2syn_dict[class_label]
+            class_human_name = syn2name_dict[folder_name].split(',')[0]
+            sample_path = os.path.join(outpath, folder_name)
+            os.makedirs(sample_path, exist_ok=True)
+            base_count = 0
+            print(f"rendering {n_samples_per_class} examples of class '{class_label}' in {opt.ddim_steps} steps and using s={opt.scale:.2f}.")
+            
+            for _ in range(0, n_samples_per_class, batch_size):
+            
+                start_code = None
+                if opt.fixed_code:
+                    start_code = torch.randn([batch_size, 3, 64, 64], device=torch.device('cuda')).to(torch.float16)
+                
+                if uncond:
+                    images = pipeline(batch_size, num_inference_steps=opt.ddim_steps, eta=opt.ddim_eta, guidance_scale=opt.scale, latents=start_code).images
+                else:
+                    images = pipeline([class_label] * batch_size, num_inference_steps=opt.ddim_steps, eta=opt.ddim_eta, guidance_scale=opt.scale, latents=start_code).images
+                
+                save_names = [f"{sample_path}/{class_human_name}_{base_count+idx:05}.jpeg" for idx in range(len(images))]
+                base_count += len(images)
+                save_images_multiprocess(8, images, save_names)
+    
+    
+if __name__ == '__main__':
+    main()
