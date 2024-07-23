@@ -41,9 +41,9 @@ def calculate_fid(real_images, generated_images, device):
         activations = []
         with torch.no_grad():
             for batch in tqdm(dataloader):
-                batch = batch.to(device)
+                batch = batch.to(device)  # Move batch to GPU
                 pred = model(batch)
-                activations.append(pred.cpu().numpy())
+                activations.append(pred.cpu().numpy())  # Move activations to CPU
         activations = np.concatenate(activations, axis=0)
         return activations
 
@@ -73,9 +73,9 @@ def calculate_inception_score(images, device, batch_size=32, splits=10):
         preds = []
         with torch.no_grad():
             for batch in tqdm(dataloader):
-                batch = batch.to(device)
+                batch = batch.to(device)  # Move batch to GPU
                 pred = model(batch)
-                preds.append(F.softmax(pred, dim=1).cpu().numpy())
+                preds.append(F.softmax(pred, dim=1).cpu().numpy())  # Move predictions to CPU
         return np.concatenate(preds, axis=0)
 
     dataloader = DataLoader(images, batch_size=batch_size, shuffle=False, num_workers=2)
@@ -98,6 +98,7 @@ if __name__ == "__main__":
     real_images = ImagesDataset(real_images_folder)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
     fid = calculate_fid(real_images, generated_images, device)
     print(f"FID: {fid}")
