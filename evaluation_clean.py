@@ -1,4 +1,3 @@
-
 import torch
 from torchvision import models, transforms
 from scipy.linalg import sqrtm
@@ -43,7 +42,7 @@ def calculate_fid(real_images, generated_images, device):
         with torch.no_grad():
             for batch in tqdm(dataloader):
                 batch = batch.to(device)  # Move batch to GPU
-                pred = model(batch)
+                pred = model(batch)[0]  # We are interested in the output before the final pooling layer
                 activations.append(pred.cpu().numpy())  # Move activations to CPU
         activations = np.concatenate(activations, axis=0)
         return activations
@@ -58,7 +57,7 @@ def calculate_fid(real_images, generated_images, device):
     sigma_generated = np.cov(generated_activations, rowvar=False)
 
     diff = mu_real - mu_generated
-    covmean = sqrtm(sigma_real.dot(sigma_generated))
+    covmean, _ = sqrtm(sigma_real.dot(sigma_generated), disp=False)
 
     if np.iscomplexobj(covmean):
         covmean = covmean.real
@@ -90,19 +89,16 @@ def calculate_inception_score(images, device, batch_size=32, splits=10):
     return np.mean(scores), np.std(scores)
 
 if __name__ == "__main__":
-    generated_images_folder = 'output/clean'  # Folder containing generated images
+    folder = 'output/clean'  # Folder containing images
     
-    generated_images = ImagesDataset(generated_images_folder)
-    
-    # Assume real_images is a dataset of real images you want to compare against
-    real_images_folder = 'output/clean'  # Replace with actual folder path
-    real_images = ImagesDataset(real_images_folder)
+    images_dataset = ImagesDataset(folder)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    fid = calculate_fid(real_images, generated_images, device)
+    # Test FID with the same dataset
+    fid = calculate_fid(images_dataset, images_dataset, device)
     print(f"FID: {fid}")
 
-    inception_score, std = calculate_inception_score(generated_images, device)
+    inception_score, std = calculate_inception_score(images_dataset, device)
     print(f"Inception Score: {inception_score} ± {std}")
