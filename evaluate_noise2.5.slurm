@@ -7,11 +7,6 @@
 #SBATCH --time=08:00:00                 # 作业运行时间限制（8小时）
 #SBATCH --mem=12G                       # 内存限制（12GB）
 
-# 加载必要的模块
-module load anaconda  # 如果需要加载Anaconda模块
-
-# 激活您的conda环境
-source activate myenv  # 替换为您的conda环境名称
 
 # 运行Python脚本
 python yucheng/evaluation_noise2.5.py
