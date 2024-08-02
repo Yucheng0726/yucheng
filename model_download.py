@@ -1,8 +1,8 @@
-from diffusers import StableDiffusionPipeline
+from diffusers import ControlNetPipeline
 
 # 加载预训练模型
 model_id = "Hhhhhao97/ldm_imagenet_random_noise_2.5"
-pipeline = StableDiffusionPipeline.from_pretrained(model_id)
+pipeline = ControlNetPipeline.from_pretrained(model_id)
 
 # 保存模型到指定路径
 save_path = "runwayml/pretrainmodel"
